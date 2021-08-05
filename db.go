@@ -124,14 +124,15 @@ type DB struct {
 	// It prevents major page faults, however used memory can't be reclaimed.
 	//
 	// Supported only on Unix via mlock/munlock syscalls.
+	// 禁止磁盘文件使用的 mmap 内存进行虚拟内存磁盘交换
 	Mlock bool
 
 	path     string
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	file     *os.File
 	dataref  []byte // mmap'ed readonly, write throws SEGV
-	data     *[maxMapSize]byte
-	datasz   int
+	data     *[maxMapSize]byte // 当前内存中的数据
+	datasz   int // 当前 mmap 内存大小
 	filesz   int // current on disk file size
 	meta0    *meta
 	meta1    *meta
@@ -151,6 +152,10 @@ type DB struct {
 
 	rwlock   sync.Mutex   // Allows only one writer at a time.
 	metalock sync.Mutex   // Protects meta page access.
+	// mmaplock 只会在 mmap 中调用写锁，在事务中是调用读锁
+	// mmaplock 的作用是在防止读事务和写事务同时发生。在有写事务时，可能调用了 mmap
+	// 进行内存数据的 remap，如果发生了 remap 则文件的内存指针地址就会发生改变。
+	// 在进行读事务是，调用 mmaplock 的 RLock。
 	mmaplock sync.RWMutex // Protects mmap access during remapping.
 	statlock sync.RWMutex // Protects stats access.
 
@@ -1003,6 +1008,7 @@ func (db *DB) grow(sz int) error {
 
 	// If the data is smaller than the alloc size then only allocate what's needed.
 	// Once it goes over the allocation size then allocate in chunks.
+	// 如果数据比 alloc size 小，则只分配实际需要的；一旦超过分配的大小（1GiB），则每次只增加 1GiB
 	if db.datasz < db.AllocSize {
 		sz = db.datasz
 	} else {

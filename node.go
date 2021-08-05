@@ -8,12 +8,13 @@ import (
 )
 
 // node represents an in-memory, deserialized page.
+// node 代表了一个存在内存中的反序列化的 page
 type node struct {
 	bucket     *Bucket
 	isLeaf     bool
 	unbalanced bool
 	spilled    bool
-	key        []byte
+	key        []byte // inodes[0] 的 key
 	pgid       pgid
 	parent     *node
 	children   nodes
@@ -37,7 +38,9 @@ func (n *node) minKeys() int {
 }
 
 // size returns the size of the node after serialization.
+// 返回序列化后的内存 size
 func (n *node) size() int {
+	// sz 初始值是 page 头部 size，elsz 是 page 内每个 element 的 size
 	sz, elsz := pageHeaderSize, n.pageElementSize()
 	for i := 0; i < len(n.inodes); i++ {
 		item := &n.inodes[i]
@@ -49,6 +52,8 @@ func (n *node) size() int {
 // sizeLessThan returns true if the node is less than a given size.
 // This is an optimization to avoid calculating a large node when we only need
 // to know if it fits inside a certain page size.
+// 判断 node 序列化后的内存的 size 是否小于 @v
+// 下面的计算是优化过的，避免把所有的 nodes 的 size 都计算一遍
 func (n *node) sizeLessThan(v uintptr) bool {
 	sz, elsz := pageHeaderSize, n.pageElementSize()
 	for i := 0; i < len(n.inodes); i++ {
@@ -78,17 +83,20 @@ func (n *node) childAt(index int) *node {
 }
 
 // childIndex returns the index of a given child node.
+// 查找 node.inodes 中 key 为 @child.key 的 inode 的位置
 func (n *node) childIndex(child *node) int {
 	index := sort.Search(len(n.inodes), func(i int) bool { return bytes.Compare(n.inodes[i].key, child.key) != -1 })
 	return index
 }
 
 // numChildren returns the number of children.
+// 返回 node 的 inode 的个数
 func (n *node) numChildren() int {
 	return len(n.inodes)
 }
 
 // nextSibling returns the next node with the same parent.
+// 返回 @n 的下一个兄弟节点
 func (n *node) nextSibling() *node {
 	if n.parent == nil {
 		return nil
@@ -113,6 +121,7 @@ func (n *node) prevSibling() *node {
 }
 
 // put inserts a key/value.
+// 插入一对 key/value
 func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	if pgid >= n.bucket.tx.meta.pgid {
 		panic(fmt.Sprintf("pgid (%d) above high water mark (%d)", pgid, n.bucket.tx.meta.pgid))
@@ -126,9 +135,12 @@ func (n *node) put(oldKey, newKey, value []byte, pgid pgid, flags uint32) {
 	index := sort.Search(len(n.inodes), func(i int) bool { return bytes.Compare(n.inodes[i].key, oldKey) != -1 })
 
 	// Add capacity and shift nodes if we don't have an exact match and need to insert.
+	// exact 值为 true，则说明找到了对应的 oldKey，跳过 if cond 后面直接替换即可
 	exact := (len(n.inodes) > 0 && index < len(n.inodes) && bytes.Equal(n.inodes[index].key, oldKey))
 	if !exact {
+		// 扩容 inodes，腾出一个位置
 		n.inodes = append(n.inodes, inode{})
+		// index 以后的所有的 inodes 整体后移一个位置
 		copy(n.inodes[index+1:], n.inodes[index:])
 	}
 
@@ -154,10 +166,12 @@ func (n *node) del(key []byte) {
 	n.inodes = append(n.inodes[:index], n.inodes[index+1:]...)
 
 	// Mark the node as needing rebalancing.
+	// 设定需要 rebalance
 	n.unbalanced = true
 }
 
 // read initializes the node from a page.
+// 根据一个 page 构建一个 node
 func (n *node) read(p *page) {
 	n.pgid = p.id
 	n.isLeaf = ((p.flags & leafPageFlag) != 0)
@@ -188,6 +202,7 @@ func (n *node) read(p *page) {
 }
 
 // write writes the items onto one or more pages.
+// 把 node 写入 page
 func (n *node) write(p *page) {
 	// Initialize page.
 	if n.isLeaf {
@@ -208,6 +223,7 @@ func (n *node) write(p *page) {
 
 	// Loop over each item and write it to the page.
 	// off tracks the offset into p of the start of the next data.
+	// 数据区域开始位置的 offset
 	off := unsafe.Sizeof(*p) + n.pageElementSize()*uintptr(len(n.inodes))
 	for i, item := range n.inodes {
 		_assert(len(item.key) > 0, "write: zero-length inode key")
@@ -234,6 +250,7 @@ func (n *node) write(p *page) {
 		}
 
 		// Write data for the element to the end of the page.
+		// 复制数据
 		l := copy(b, item.key)
 		copy(b[l:], item.value)
 	}
@@ -274,7 +291,7 @@ func (n *node) splitTwo(pageSize uintptr) (*node, *node) {
 	}
 
 	// Determine the threshold before starting a new node.
-	var fillPercent = n.bucket.FillPercent
+	var fillPercent = n.bucket.FillPercent // 默认是 50%
 	if fillPercent < minFillPercent {
 		fillPercent = minFillPercent
 	} else if fillPercent > maxFillPercent {
@@ -308,6 +325,8 @@ func (n *node) splitTwo(pageSize uintptr) (*node, *node) {
 // splitIndex finds the position where a page will fill a given threshold.
 // It returns the index as well as the size of the first page.
 // This is only be called from split().
+// @threshold 是一个 page 最少的
+// 返回分离的位置，以及第一个 page 的 size
 func (n *node) splitIndex(threshold int) (index, sz uintptr) {
 	sz = pageHeaderSize
 
@@ -592,6 +611,10 @@ func (s nodes) Less(i, j int) bool {
 // inode represents an internal node inside of a node.
 // It can be used to point to elements in a page or point
 // to an element which hasn't been added to a page yet.
+// inode 代表了一个 node 内的 内部 node
+// 它可以指向一个 page 内部的 elements 或者一个尚未放入 page 内部的 element
+// 如果 inode 是一个 branch，则这里有效的 value = {flags, pgid, key}
+// 如果 inode 是一个 leaf，则这里有效的 value = {flags, key, value}
 type inode struct {
 	flags uint32
 	pgid  pgid

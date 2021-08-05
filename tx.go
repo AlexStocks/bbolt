@@ -21,6 +21,10 @@ type txid uint64
 // them. Pages can not be reclaimed by the writer until no more transactions
 // are using them. A long running read transaction can cause the database to
 // quickly grow.
+// Tx 区分为只读或者写两种类型事务。
+// 只读事务可用于创建 cursor 并进行数据的读取。写事务可用于删除 bucket 和 KV。
+// 只读事务操作完毕后需要进行 Rollback。写事务操作完毕后需要进行 commit or  rollback。
+// 写事务可以改写 page 的前提是：没有其他读写事务在操作这个 page。一个长尾的读事务可能导致 db 快速增长。
 type Tx struct {
 	writable       bool
 	managed        bool

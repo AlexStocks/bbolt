@@ -15,6 +15,13 @@ import (
 // Changing data while traversing with a cursor may cause it to be invalidated
 // and return unexpected keys and/or values. You must reposition your cursor
 // after mutating data.
+//
+// Cursor 是一个 bucket 内数据的 iterator。
+// Cursor lifetime 跟一个 transaction 绑定，tx 打开这个 cursor 就生效。
+// Cursor 提供的 kv 只在 tx 声明周期内有效。
+//
+// 使用 cursor 在遍历一个系统时如果去 update 一个 kv 的值，则会导致不可预期的行为。
+// 当数据的值改变时，你需要重置 cursor 的值。
 type Cursor struct {
 	bucket *Bucket
 	stack  []elemRef
