@@ -41,19 +41,27 @@ type Tx struct {
 	// By default, the flag is unset, which works well for mostly in-memory
 	// workloads. For databases that are much larger than available RAM,
 	// set the flag to syscall.O_DIRECT to avoid trashing the page cache.
+	//
+	// 当调用 WriteTo() 函数时，设定此变量。Tx 在打开 database 时指定了特殊的 flag，以 copy 数据。
+	//
+	// 默认情况下，这个 flag 是 unset 的，在大部分任务都是内存任务时，这种模式工作良好。对于
+	// 大于可用的 RAM 的 db，可以设定 syscall.O_DIRECT 以绕过 page cache。
 	WriteFlag int
 }
 
 // init initializes the transaction.
 func (tx *Tx) init(db *DB) {
+	// 绑定 db
 	tx.db = db
 	tx.pages = nil
 
 	// Copy the meta page since it can be changed by the writer.
+	// 拷贝 meta
 	tx.meta = &meta{}
 	db.meta().copy(tx.meta)
 
 	// Copy over the root bucket.
+	// 拷贝跟 bucket
 	tx.root = newBucket(tx)
 	tx.root.bucket = &bucket{}
 	*tx.root.bucket = tx.meta.root
@@ -142,6 +150,7 @@ func (tx *Tx) OnCommit(fn func()) {
 // Commit writes all changes to disk and updates the meta page.
 // Returns an error if a disk write error occurs, or if Commit is
 // called on a read-only transaction.
+// Commit 把所有改动都写入 disk 并更新 meta page。
 func (tx *Tx) Commit() error {
 	_assert(!tx.managed, "managed tx commit not allowed")
 	if tx.db == nil {
@@ -153,6 +162,7 @@ func (tx *Tx) Commit() error {
 	// TODO(benbjohnson): Use vectorized I/O to write out dirty pages.
 
 	// Rebalance nodes which have had deletions.
+	// 再平衡
 	var startTime = time.Now()
 	tx.root.rebalance()
 	if tx.stats.Rebalance > 0 {
@@ -160,6 +170,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// spill data onto dirty pages.
+	// 分裂
 	startTime = time.Now()
 	if err := tx.root.spill(); err != nil {
 		tx.rollback()
@@ -168,9 +179,11 @@ func (tx *Tx) Commit() error {
 	tx.stats.SpillTime += time.Since(startTime)
 
 	// Free the old root bucket.
+	// 释放老的 bucket
 	tx.meta.root.root = tx.root.root
 
 	// Free the old freelist because commit writes out a fresh freelist.
+	// 释放老的 freelist，因为 commit 会产生一个新的 freelist
 	if tx.meta.freelist != pgidNoFreelist {
 		tx.db.freelist.free(tx.meta.txid, tx.db.page(tx.meta.freelist))
 	}
@@ -185,6 +198,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// Write dirty pages to disk.
+	// 把更新的 page 写入磁盘
 	startTime = time.Now()
 	if err := tx.write(); err != nil {
 		tx.rollback()
@@ -208,6 +222,7 @@ func (tx *Tx) Commit() error {
 	}
 
 	// Write meta to disk.
+	// 把 meta 写入磁盘
 	if err := tx.writeMeta(); err != nil {
 		tx.rollback()
 		return err
@@ -215,6 +230,7 @@ func (tx *Tx) Commit() error {
 	tx.stats.WriteTime += time.Since(startTime)
 
 	// Finalize the transaction.
+	// 关闭事务
 	tx.close()
 
 	// Execute commit handlers now that the locks have been removed.
@@ -252,6 +268,7 @@ func (tx *Tx) commitFreelist() error {
 
 // Rollback closes the transaction and ignores all previous updates. Read-only
 // transactions must be rolled back and not committed.
+// 用户直接调用这个函数以回滚所有更新，不进行改动提交。
 func (tx *Tx) Rollback() error {
 	_assert(!tx.managed, "managed tx rollback not allowed")
 	if tx.db == nil {
@@ -262,6 +279,7 @@ func (tx *Tx) Rollback() error {
 }
 
 // nonPhysicalRollback is called when user calls Rollback directly, in this case we do not need to reload the free pages from disk.
+// 如果用户直接调用了 Rollback，则调用这个函数。如果事务是写事务，在这个函数中不用从磁盘重新 load free pages。
 func (tx *Tx) nonPhysicalRollback() {
 	if tx.db == nil {
 		return
@@ -273,6 +291,9 @@ func (tx *Tx) nonPhysicalRollback() {
 }
 
 // rollback needs to reload the free pages from disk in case some system error happens like fsync error.
+// 回滚事务。
+// 如果当前事务是个读事务则直接退出。
+// 如果当前事务是写事务，则需要从磁盘中重读 free pages 以防止 fsync 时候发生某些系统错误。
 func (tx *Tx) rollback() {
 	if tx.db == nil {
 		return
@@ -335,6 +356,7 @@ func (tx *Tx) Copy(w io.Writer) error {
 
 // WriteTo writes the entire database to a writer.
 // If err == nil then exactly tx.Size() bytes will be written into the writer.
+// @tx 把事务内的全部数据都写入 @w
 func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 	// Attempt to open reader with WriteFlag
 	f, err := tx.db.openFile(tx.db.path, os.O_RDONLY|tx.WriteFlag, 0)
@@ -354,6 +376,7 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 	*page.meta() = *tx.meta
 
 	// Write meta 0.
+	// 写入第一个 meta
 	page.id = 0
 	page.meta().checksum = page.meta().sum64()
 	nn, err := w.Write(buf)
@@ -363,6 +386,7 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 	}
 
 	// Write meta 1 with a lower transaction id.
+	// 写入第二个 meta
 	page.id = 1
 	page.meta().txid -= 1
 	page.meta().checksum = page.meta().sum64()
@@ -378,6 +402,7 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 	}
 
 	// Copy data pages.
+	// 把 tx 对应的文件的剩余内容拷贝到 @w 中
 	wn, err := io.CopyN(w, f, tx.Size()-int64(tx.db.pageSize*2))
 	n += wn
 	if err != nil {
@@ -390,6 +415,7 @@ func (tx *Tx) WriteTo(w io.Writer) (n int64, err error) {
 // CopyFile copies the entire database to file at the given path.
 // A reader transaction is maintained during the copy so it is safe to continue
 // using the database while a copy is in progress.
+// CopyFile 把当前 bolt 文件拷贝到一个新的文件中。这个函数是在读事务中调用的，所以拷贝文件是安全的。
 func (tx *Tx) CopyFile(path string, mode os.FileMode) error {
 	f, err := tx.db.openFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {

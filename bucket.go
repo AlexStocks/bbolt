@@ -26,12 +26,17 @@ const (
 const DefaultFillPercent = 0.5
 
 // Bucket represents a collection of key/value pairs inside the database.
+// Bucket 代表 db 内部所有的 kv 对组合
 type Bucket struct {
 	*bucket
 	tx       *Tx                // the associated transaction
+	// bucket 集合
 	buckets  map[string]*Bucket // subbucket cache
+	// 根 page
 	page     *page              // inline page reference
+	// page 在内存中的 node
 	rootNode *node              // materialized node for the root page.
+	// node 缓存
 	nodes    map[pgid]*node     // node cache
 
 	// Sets the threshold for filling nodes when they split. By default,
@@ -39,6 +44,10 @@ type Bucket struct {
 	// amount if you know that your write workloads are mostly append-only.
 	//
 	// This is non-persisted across transactions so it must be set in every Tx.
+	//
+	// B+ 树的 node 的 fill percent。默认值为 50%。如果可以确认写任务是 append-only
+	// 类型，则可以增加这个值。
+	// 这个值不会被固化。每个事物的值都不相同。
 	FillPercent float64
 }
 
@@ -46,12 +55,17 @@ type Bucket struct {
 // This is stored as the "value" of a bucket key. If the bucket is small enough,
 // then its root page can be stored inline in the "value", after the bucket
 // header. In the case of inline buckets, the "root" will be 0.
+//
+// bucket 代表了一个文件类型的 bucket。它存储了一个 bucket key 的值。如果 bucket 足够小，
+// root page 可以直接作为 value 在 bucket header 后面以 inline 形式存下来。inline 形式
+// 的 bucket 的 root 值为 0。
 type bucket struct {
 	root     pgid   // page id of the bucket's root-level page
 	sequence uint64 // monotonically incrementing, used by NextSequence()
 }
 
 // newBucket returns a new bucket associated with a transaction.
+// 返回一个与 @tx 有关的 Bucket
 func newBucket(tx *Tx) Bucket {
 	var b = Bucket{tx: tx, FillPercent: DefaultFillPercent}
 	if tx.writable {
@@ -79,6 +93,9 @@ func (b *Bucket) Writable() bool {
 // Cursor creates a cursor associated with the bucket.
 // The cursor is only valid as long as the transaction is open.
 // Do not use a cursor after the transaction is closed.
+//
+// 返回一个与 bucket 绑定的 bucket。只要 tx 处于 open 状态，则 cursor 才
+// 有效。事务关闭后，不要再使用这个 cursor。
 func (b *Bucket) Cursor() *Cursor {
 	// Update transaction statistics.
 	b.tx.stats.CursorCount++
@@ -93,6 +110,9 @@ func (b *Bucket) Cursor() *Cursor {
 // Bucket retrieves a nested bucket by name.
 // Returns nil if the bucket does not exist.
 // The bucket instance is only valid for the lifetime of the transaction.
+//
+// 返回名称为 @name 的 Bucket。
+// 如果 bucket 不存在，则返回 nil。返回的 Bucket 实例仅仅在 tx 生命周期内有效。
 func (b *Bucket) Bucket(name []byte) *Bucket {
 	if b.buckets != nil {
 		if child := b.buckets[string(name)]; child != nil {
@@ -105,11 +125,13 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 	k, v, flags := c.seek(name)
 
 	// Return nil if the key doesn't exist or it is not a bucket.
+	// 如果 key 名称对不上或者 flag 不是一个 bucket，则返回空
 	if !bytes.Equal(name, k) || (flags&bucketLeafFlag) == 0 {
 		return nil
 	}
 
 	// Otherwise create a bucket and cache it.
+	// 创建一个新的 bucket，并缓存下来
 	var child = b.openBucket(v)
 	if b.buckets != nil {
 		b.buckets[string(name)] = child
@@ -120,6 +142,8 @@ func (b *Bucket) Bucket(name []byte) *Bucket {
 
 // Helper method that re-interprets a sub-bucket value
 // from a parent into a Bucket
+//
+// 重新创建一个子 bucket
 func (b *Bucket) openBucket(value []byte) *Bucket {
 	var child = newBucket(b.tx)
 
@@ -136,14 +160,17 @@ func (b *Bucket) openBucket(value []byte) *Bucket {
 	// If this is a writable transaction then we need to copy the bucket entry.
 	// Read-only transactions can point directly at the mmap entry.
 	if b.tx.writable && !unaligned {
+		// 如果是写类型的 tx，则 child.bucket 值是 @value 的 copy
 		child.bucket = &bucket{}
 		*child.bucket = *(*bucket)(unsafe.Pointer(&value[0]))
 	} else {
+		// 如果是读类型的 tx，则 child.bucket 值是 @value
 		child.bucket = (*bucket)(unsafe.Pointer(&value[0]))
 	}
 
 	// Save a reference to the inline page if the bucket is inline.
 	if child.root == 0 {
+		// bucket 是 inline 类型，则 page 也是 inline 类型
 		child.page = (*page)(unsafe.Pointer(&value[bucketHeaderSize]))
 	}
 
@@ -262,11 +289,13 @@ func (b *Bucket) Get(key []byte) []byte {
 	k, v, flags := b.Cursor().seek(key)
 
 	// Return nil if this is a bucket.
+	// 如果找到的是一个 bucket 类型的 kv，则返回
 	if (flags & bucketLeafFlag) != 0 {
 		return nil
 	}
 
 	// If our target node isn't the same key as what's passed in then return nil.
+	// 如果 key 不相等，则返回。
 	if !bytes.Equal(key, k) {
 		return nil
 	}
@@ -295,11 +324,13 @@ func (b *Bucket) Put(key []byte, value []byte) error {
 	k, _, flags := c.seek(key)
 
 	// Return an error if there is an existing key with a bucket value.
+	// 如果 key 已经存在，则返回。
 	if bytes.Equal(key, k) && (flags&bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
 
 	// Insert into node.
+	// 先把 kv 放入 node 中
 	key = cloneBytes(key)
 	c.node().put(key, key, value, 0, 0)
 
@@ -321,16 +352,19 @@ func (b *Bucket) Delete(key []byte) error {
 	k, _, flags := c.seek(key)
 
 	// Return nil if the key doesn't exist.
+	// 如果 key 不存在，则返回
 	if !bytes.Equal(key, k) {
 		return nil
 	}
 
 	// Return an error if there is already existing bucket value.
+	// 如果 value 是一个 bucket，则返回
 	if (flags & bucketLeafFlag) != 0 {
 		return ErrIncompatibleValue
 	}
 
 	// Delete the node if we have a matching key.
+	// 删除 node 中的 kv
 	c.node().del(key)
 
 	return nil
