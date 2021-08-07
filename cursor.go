@@ -39,7 +39,7 @@ func (c *Cursor) First() (key []byte, value []byte) {
 	_assert(c.bucket.tx.db != nil, "tx closed")
 	c.stack = c.stack[:0]
 	p, n := c.bucket.pageNode(c.bucket.root)
-	c.stack = append(c.stack, elemRef{page: p, node: n, index: 0})
+	c.stack = append(c.stack, elemRef{page: p, node: n, index: 0}) // 此处 index 为 0，是先遍历最左边的 inodes
 	c.first()
 
 	// If we land on an empty page then move to the next value.
@@ -186,6 +186,7 @@ func (c *Cursor) first() {
 			pgid = ref.page.branchPageElement(uint16(ref.index)).pgid
 		}
 		p, n := c.bucket.pageNode(pgid)
+		// index 为 0，先遍历最左边的 inode，最左边的一定是最小的。
 		c.stack = append(c.stack, elemRef{page: p, node: n, index: 0})
 	}
 }
@@ -381,9 +382,9 @@ func (c *Cursor) node() *node {
 
 // elemRef represents a reference to an element on a given page/node.
 type elemRef struct {
-	page  *page
-	node  *node
-	index int
+	page  *page // 目标 page
+	node  *node // 目标 node
+	index int   // 遍历到的 page/node 中第 @index 个 inodes
 }
 
 // isLeaf returns whether the ref is pointing at a leaf page/node.

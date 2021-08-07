@@ -113,6 +113,7 @@ func (n *branchPageElement) key() []byte {
 
 // leafPageElement represents a node on a leaf page.
 type leafPageElement struct {
+	// 值为 0， 说明本 element 是一个真正的叶子节点；值为 1，则是另一个 branch 的 root
 	flags uint32
 	pos   uint32
 	ksize uint32

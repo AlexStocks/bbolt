@@ -20,10 +20,12 @@ type pidSet map[pgid]struct{}
 // freelist represents a list of all pages that are available for allocation.
 // It also tracks pages that have been freed but are still in use by open transactions.
 type freelist struct {
-	freelistType   FreelistType                // freelist type
-	ids            []pgid                      // all free and available free page ids.
-	allocs         map[pgid]txid               // mapping of txid that allocated a pgid.
-	pending        map[txid]*txPending         // mapping of soon-to-be free page ids by tx.
+	freelistType FreelistType  // freelist type
+	ids          []pgid        // all free and available free page ids.
+	allocs       map[pgid]txid // mapping of txid that allocated a pgid.
+	// 存储的是当前一些 写事务 相关的 page，或者称之为脏页，待合入 B+ 树。一旦 Commit 成功，就处于 free 状态
+	pending map[txid]*txPending // mapping of soon-to-be free page ids by tx.
+	// 存储所有 free 和 pending 状态页面
 	cache          map[pgid]bool               // fast lookup of all free and pending page ids.
 	freemaps       map[uint64]pidSet           // key is the size of continuous pages(span), value is a set which contains the starting pgids of same size
 	forwardMap     map[pgid]uint64             // key is start pgid, value is its span size

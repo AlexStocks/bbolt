@@ -29,15 +29,15 @@ const DefaultFillPercent = 0.5
 // Bucket 代表 db 内部所有的 kv 对组合
 type Bucket struct {
 	*bucket
-	tx       *Tx                // the associated transaction
+	tx *Tx // the associated transaction
 	// bucket 集合
-	buckets  map[string]*Bucket // subbucket cache
+	buckets map[string]*Bucket // subbucket cache
 	// 根 page
-	page     *page              // inline page reference
+	page *page // inline page reference
 	// page 在内存中的 node
-	rootNode *node              // materialized node for the root page.
+	rootNode *node // materialized node for the root page.
 	// node 缓存
-	nodes    map[pgid]*node     // node cache
+	nodes map[pgid]*node // node cache
 
 	// Sets the threshold for filling nodes when they split. By default,
 	// the bucket will fill to 50% but it can be useful to increase this
@@ -393,6 +393,7 @@ func (b *Bucket) SetSequence(v uint64) error {
 }
 
 // NextSequence returns an autoincrementing integer for the bucket.
+// 提供给用户使用
 func (b *Bucket) NextSequence() (uint64, error) {
 	if b.tx.db == nil {
 		return 0, ErrTxClosed

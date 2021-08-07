@@ -5,3 +5,6 @@
 cover.out
 /.idea
 *.iml
+
+my.db
+.vscode

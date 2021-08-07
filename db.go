@@ -130,10 +130,21 @@ type DB struct {
 	path     string
 	openFile func(string, int, os.FileMode) (*os.File, error)
 	file     *os.File
-	dataref  []byte // mmap'ed readonly, write throws SEGV
+	dataref  []byte            // mmap'ed readonly, write throws SEGV
 	data     *[maxMapSize]byte // 当前内存中的数据
-	datasz   int // 当前 mmap 内存大小
-	filesz   int // current on disk file size
+	datasz   int               // 当前 mmap 内存大小
+	filesz   int               // current on disk file size
+	// bbolt 实现了 MVCC，每次创建事务时，不管读写事务，都会复制最新【最大ID】
+	// meta，然后再上面进行改进。事务进行过程中，被修改的 page 【脏页】会先缓存下来，事务提交
+	// 后 page 会被清零放入 freelist 中。这种方式被称为 Append Only B+ 树方式，
+	// 或者叫做 COPY ON WRITE 技术，[ Bolt源码解析（三）：kv的插入、查询、删除操作 ](site:
+	// https://blog.csdn.net/cyq6239075/article/details/105601565 )
+	// 一文中有个图片能够很好的说明整个道理。
+	//
+	// MVCC 的核心是同时保存 key 的多个版本的数据，允许多个事务并行。bboltdb 是允许多读一写，
+	// 即同时允许同时并行多个读事务或一个写事务，所以双缓冲 meta 区域就够了。
+	// 假设有 meta0 和 meta1，meta1 事务版本比较新，不管读写事务，
+	// 每次都是读最新版本的 meta1，当写事务执行完毕后 meta0 内容即被更新成最新事务。
 	meta0    *meta
 	meta1    *meta
 	pageSize int
@@ -150,8 +161,8 @@ type DB struct {
 	batchMu sync.Mutex
 	batch   *batch
 
-	rwlock   sync.Mutex   // Allows only one writer at a time.
-	metalock sync.Mutex   // Protects meta page access.
+	rwlock   sync.Mutex // Allows only one writer at a time.
+	metalock sync.Mutex // Protects meta page access.
 	// mmaplock 只会在 mmap 中调用写锁，在事务中是调用读锁
 	// mmaplock 的作用是在防止读事务和写事务同时发生。在有写事务时，可能调用了 mmap
 	// 进行内存数据的 remap，如果发生了 remap 则文件的内存指针地址就会发生改变。
@@ -1176,15 +1187,15 @@ type Info struct {
 }
 
 type meta struct {
-	magic    uint32
-	version  uint32
-	pageSize uint32
-	flags    uint32
-	root     bucket
-	freelist pgid
-	pgid     pgid
-	txid     txid
-	checksum uint64
+	magic    uint32 // 值为 0xED0CDAED
+	version  uint32 // 值为 2
+	pageSize uint32 // bbolt page size
+	flags    uint32 // reserved, of no usage
+	root     bucket // root bucket
+	freelist pgid   // freelist page id
+	pgid     pgid   // 当前页面总数，= max page id + 1
+	txid     txid   // 上次写事务 ID，有读事务时 ID 值不变
+	checksum uint64 // meta page 的 checksum
 }
 
 // validate checks the marker bytes and version of the meta page to ensure it matches this binary.
