@@ -269,6 +269,7 @@ func (f *freelist) read(p *page) {
 	}
 	// If the page.count is at the max uint16 value (64k) then it's considered
 	// an overflow and the size of the freelist is stored as the first element.
+	// 计算 element number
 	var idx, count = 0, int(p.count)
 	if count == 0xFFFF {
 		idx = 1
@@ -284,11 +285,14 @@ func (f *freelist) read(p *page) {
 		f.ids = nil
 	} else {
 		var ids []pgid
+		// 找到 free page slice 的 data 指针区域
 		data := unsafeIndex(unsafe.Pointer(p), unsafe.Sizeof(*p), unsafe.Sizeof(ids[0]), idx)
+		// 把 ids 整理成一个 slice
 		unsafeSlice(unsafe.Pointer(&ids), data, count)
 
 		// copy the ids, so we don't modify on the freelist page directly
 		idsCopy := make([]pgid, count)
+		// copy page 中的 free element 数组
 		copy(idsCopy, ids)
 		// Make sure they're sorted.
 		sort.Sort(pgids(idsCopy))
@@ -328,6 +332,7 @@ func (f *freelist) write(p *page) error {
 		unsafeSlice(unsafe.Pointer(&ids), data, l)
 		f.copyall(ids)
 	} else {
+		// 如果 freelist page 数目大于等于 0xFFFF，则 page.count 设置为 0xFFFF，同时 ptr[0] 值定为 count
 		p.count = 0xFFFF
 		var ids []pgid
 		data := unsafeAdd(unsafe.Pointer(p), unsafe.Sizeof(*p))

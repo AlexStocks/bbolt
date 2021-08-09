@@ -10,15 +10,15 @@ import (
 // node represents an in-memory, deserialized page.
 // node 代表了一个存在内存中的反序列化的 page
 type node struct {
-	bucket     *Bucket
+	bucket     *Bucket // 相关的 bucket
 	isLeaf     bool
-	unbalanced bool
-	spilled    bool
-	key        []byte // inodes[0] 的 key
-	pgid       pgid
-	parent     *node
-	children   nodes
-	inodes     inodes
+	unbalanced bool   // 如果为 true，要进行 page 合并
+	spilled    bool   // 如果为 true，要进行 page 分裂
+	key        []byte // inodes[0] 的 key，node 中最小的 key
+	pgid       pgid   // 对应的 page 的 id
+	parent     *node  // 节点的 parent
+	children   nodes  // 节点的孩子节点
+	inodes     inodes // 节点上的索引数据
 }
 
 // root returns the top-level node this node is attached to.

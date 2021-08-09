@@ -111,8 +111,9 @@ func (b *Bucket) Cursor() *Cursor {
 // Returns nil if the bucket does not exist.
 // The bucket instance is only valid for the lifetime of the transaction.
 //
-// 返回名称为 @name 的 Bucket。
-// 如果 bucket 不存在，则返回 nil。返回的 Bucket 实例仅仅在 tx 生命周期内有效。
+// 返回名称为 @name 的 Bucket。如果 bucket 不存在则创建一个新的 bucket。
+// 如果存在一个使用了 @name 作为 key 的普通 KV，返回 nil。
+// 返回的 Bucket 实例仅仅在 tx 生命周期内有效。
 func (b *Bucket) Bucket(name []byte) *Bucket {
 	if b.buckets != nil {
 		if child := b.buckets[string(name)]; child != nil {

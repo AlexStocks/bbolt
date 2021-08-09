@@ -101,9 +101,9 @@ func (s pages) Less(i, j int) bool { return s[i].id < s[j].id }
 
 // branchPageElement represents a node on a branch page.
 type branchPageElement struct {
-	pos   uint32
-	ksize uint32
-	pgid  pgid
+	pos   uint32 // 子 branch 中最小 key 在当前 page 中距离当前 page element 的 offset
+	ksize uint32 // 子 branch 最小 key 的 size
+	pgid  pgid   // 子 branch 的 page 编号
 }
 
 // key returns a byte slice of the node key.
@@ -182,6 +182,7 @@ func mergepgids(dst, a, b pgids) {
 	merged := dst[:0]
 
 	// Assign lead to the slice with a lower starting value, follow to the higher value.
+	// 确保 lead 小，follow 大
 	lead, follow := a, b
 	if b[0] < a[0] {
 		lead, follow = b, a
@@ -190,6 +191,8 @@ func mergepgids(dst, a, b pgids) {
 	// Continue while there are elements in the lead.
 	for len(lead) > 0 {
 		// Merge largest prefix of lead that is ahead of follow[0].
+		// 加速复制速度：
+		// 先找到 lead 中第一个小于 follower[0] 的位置，然后把这批 elements 全量复制到 merged 中
 		n := sort.Search(len(lead), func(i int) bool { return lead[i] > follow[0] })
 		merged = append(merged, lead[:n]...)
 		if n >= len(lead) {
