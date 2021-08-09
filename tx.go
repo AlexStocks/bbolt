@@ -26,13 +26,15 @@ type txid uint64
 // 只读事务操作完毕后需要进行 Rollback。写事务操作完毕后需要进行 commit or  rollback。
 // 写事务可以改写 page 的前提是：没有其他读写事务在操作这个 page。一个长尾的读事务可能导致 db 快速增长。
 type Tx struct {
-	writable       bool
-	managed        bool
-	db             *DB
-	meta           *meta
-	root           Bucket
-	pages          map[pgid]*page
-	stats          TxStats
+	writable bool // 事务类型
+	// 为 true，对 DB 的读写是通过 db 的成员函数进行的；为 false，则通过 tx 的成员函数读写 db
+	managed bool
+	db      *DB
+	meta    *meta
+	root    Bucket
+	pages   map[pgid]*page
+	stats   TxStats
+	// 事务提交后会被执行的回调函数，或者称之为钩子函数
 	commitHandlers []func()
 
 	// WriteFlag specifies the flag for write-related methods like WriteTo().

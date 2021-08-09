@@ -1199,6 +1199,7 @@ type meta struct {
 }
 
 // validate checks the marker bytes and version of the meta page to ensure it matches this binary.
+// 验证 magic/version/checksum，确保 meta 及其 db 数据有效
 func (m *meta) validate() error {
 	if m.magic != magic {
 		return ErrInvalid
